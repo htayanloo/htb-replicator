@@ -1,0 +1,194 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# htb-replicator · Example Configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# Copy this file to config.yaml and adjust values to match your environment.
+# All values can also be overridden via environment variables prefixed with
+# REPLICATOR_, e.g. REPLICATOR_WORKERS=10.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Source ────────────────────────────────────────────────────────────────────
+# The source defines where objects are read from. Set type to one of:
+#   s3     — S3-compatible bucket (AWS, MinIO, Ceph, LocalStack)
+#   sftp   — SFTP server
+#   ftp    — FTP server
+#   local  — local filesystem or NFS mount
+#
+# All source-specific settings go under opts:.
+#
+# ── S3 source (default) ───────────────────────────────────────────────────────
+source:
+  type: "s3"
+  opts:
+    # S3-compatible endpoint URL. Leave empty to use the default AWS endpoint.
+    endpoint: "http://minio:9000"
+
+    # AWS region (required even for MinIO; use "us-east-1" as default).
+    region: "us-east-1"
+
+    # Bucket to replicate from.
+    bucket: "source-bucket"
+
+    # Static credentials. For IAM role-based auth, leave both empty.
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+
+    # Use path-style addressing (required for MinIO and most S3-compatible stores).
+    path_style: true
+
+    # Optional prefix to restrict the listing to a sub-path, e.g. "backups/".
+    prefix: ""
+
+# ── SFTP source (uncomment to use) ───────────────────────────────────────────
+# source:
+#   type: "sftp"
+#   opts:
+#     host: "backup-server"
+#     port: 22
+#     username: "backup"
+#     password: "secret"
+#     base_path: "/backups"
+#     # key_file: "/home/user/.ssh/id_rsa"   # optional SSH key auth
+
+# ── FTP source (uncomment to use) ────────────────────────────────────────────
+# source:
+#   type: "ftp"
+#   opts:
+#     host: "ftp.example.com"
+#     port: 21
+#     username: "backup"
+#     password: "secret"
+#     base_path: "/backups"
+
+# ── Local / NFS source (uncomment to use) ────────────────────────────────────
+# source:
+#   type: "local"
+#   opts:
+#     path: "/mnt/backup-source"
+#
+# Note: For non-S3 sources a pseudo-ETag "<size>-<mtime_ns>" is generated from
+# file size and modification time. This is visually distinct from real S3 ETags
+# and causes the sync loop to skip MD5 content verification (same as multipart
+# S3 uploads). Files are considered changed when size or mtime changes.
+
+# ── Replication Destinations ──────────────────────────────────────────────────
+destinations:
+  # Local filesystem backup.
+  - id: "local-backup"
+    type: "local"
+    opts:
+      path: "/data/backups"
+
+  # S3-compatible replica (e.g., second MinIO instance or AWS bucket).
+  - id: "s3-replica"
+    type: "s3"
+    opts:
+      endpoint: "http://minio-replica:9000"
+      region: "us-east-1"
+      bucket: "replica-bucket"
+      access_key_id: "minioadmin"
+      secret_access_key: "minioadmin"
+      path_style: true
+
+  # SFTP destination.
+  - id: "sftp-backup"
+    type: "sftp"
+    opts:
+      host: "sftp-server"
+      port: 22
+      username: "backup"
+      password: "secret"
+      base_path: "/backup"
+
+  # FTP destination (uncomment to enable).
+  # - id: "ftp-backup"
+  #   type: "ftp"
+  #   opts:
+  #     host: "ftp-server"
+  #     port: 21
+  #     username: "backup"
+  #     password: "secret"
+  #     base_path: "/backup"
+
+# ── Worker Pool ───────────────────────────────────────────────────────────────
+# Number of concurrent replication goroutines.
+workers: 5
+
+# ── Schedule ──────────────────────────────────────────────────────────────────
+# Two mutually-exclusive scheduling modes:
+#
+# Mode 1 — Cron expression (recommended for calendar-aligned backups).
+#   The service runs exactly at the times specified by the cron expression.
+#   Supports standard 5-field cron AND the extended 6-field format
+#   (seconds as first field) and descriptors like @hourly, @daily, @every 2h.
+#
+#   Standard 5-field cron: minute  hour  day-of-month  month  day-of-week
+#
+#   Examples:
+#     "0 2 * * *"        every day at 02:00 AM
+#     "0 */6 * * *"      every 6 hours  (00:00, 06:00, 12:00, 18:00)
+#     "0 0 * * 0"        every Sunday at midnight
+#     "@hourly"          equivalent to "0 * * * *"
+#     "@every 30m"       every 30 minutes
+#
+schedule: "0 2 * * *"
+
+# Mode 2 — Fixed interval ticker (simpler, used when schedule is empty/absent).
+#   How many seconds to wait between sync cycles.
+#   Set to 0 to disable automatic cycling (use sync-once instead).
+#
+# interval_seconds: 300
+
+# ── Metadata Store ────────────────────────────────────────────────────────────
+# Path to the SQLite database used for tracking sync state.
+metadata_db: "/data/replicator.db"
+
+# ── Prometheus Metrics ────────────────────────────────────────────────────────
+# Port on which to expose the /metrics endpoint (0 to disable).
+metrics_port: 2112
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Verbosity level: debug | info | warn | error
+log_level: "info"
+
+# ── Alerting ─────────────────────────────────────────────────────────────────
+alerts:
+  # Number of consecutive failures on a destination before triggering an alert.
+  error_threshold: 5
+
+  # Minimum minutes between alerts for the same destination (cooldown).
+  cooldown_minutes: 15
+
+  # Telegram bot alert (comment out to disable).
+  telegram:
+    token: "your-bot-token"
+    chat_id: -1001234567890
+
+  # Slack incoming webhook (comment out to disable).
+  # slack:
+  #   webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+  # Email via SMTP (comment out to disable).
+  # email:
+  #   host: "smtp.example.com"
+  #   port: 587
+  #   username: "alerts@example.com"
+  #   password: "smtp-password"
+  #   from: "alerts@example.com"
+  #   to:
+  #     - "ops@example.com"
+  #     - "oncall@example.com"
+
+  # Generic HTTP webhook (comment out to disable).
+  # webhook:
+  #   url: "https://alerting.example.com/hooks/backup"
+  #   headers:
+  #     Authorization: "Bearer your-token"
+  #     X-Source: "htb-replicator"
+
+# ── Retention Policy ──────────────────────────────────────────────────────────
+retention:
+  # Days to retain objects in the SOURCE bucket (0 = never delete from source).
+  source_days: 90
+
+  # Days to retain objects in DESTINATIONS (0 = never delete from destinations).
+  destination_days: 365

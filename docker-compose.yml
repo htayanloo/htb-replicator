@@ -1,0 +1,137 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# htb-replicator · Development / Demo Stack
+# ──────────────────────────────────────────────────────────────────────────────
+# Services:
+#   minio        – source S3-compatible object store
+#   minio-replica – destination S3-compatible object store
+#   replicator   – the htb-replicator service
+#   prometheus   – scrapes Prometheus metrics (optional)
+# ──────────────────────────────────────────────────────────────────────────────
+
+networks:
+  backup-net:
+    driver: bridge
+
+volumes:
+  minio-data:
+  minio-replica-data:
+  replicator-data:
+  prometheus-data:
+
+services:
+  # ── Source MinIO ────────────────────────────────────────────────────────────
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
+    container_name: minio-source
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    networks:
+      - backup-net
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Replica MinIO ───────────────────────────────────────────────────────────
+  minio-replica:
+    image: quay.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
+    container_name: minio-replica
+    command: server /data --console-address ":9003"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-replica-data:/data
+    ports:
+      - "9002:9000"   # S3 API
+      - "9003:9003"   # Web console
+    networks:
+      - backup-net
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Bucket initializer (runs once) ─────────────────────────────────────────
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-replica:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set source http://minio:9000 minioadmin minioadmin &&
+        mc alias set replica http://minio-replica:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing source/source-bucket &&
+        mc mb --ignore-existing replica/replica-bucket &&
+        echo 'Buckets ready'
+      "
+    networks:
+      - backup-net
+    restart: "no"
+
+  # ── Replicator ──────────────────────────────────────────────────────────────
+  replicator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: replicator
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-replica:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - replicator-data:/data
+      - ./config.example.yaml:/config/config.yaml:ro
+    environment:
+      # Override individual config values via env vars (REPLICATOR_ prefix).
+      REPLICATOR_METADATA_DB: /data/replicator.db
+    ports:
+      - "2112:2112"   # Prometheus metrics
+    networks:
+      - backup-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2112/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Prometheus ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    networks:
+      - backup-net
+    depends_on:
+      - replicator
+    profiles:
+      - monitoring   # Only started with: docker compose --profile monitoring up

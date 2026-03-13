@@ -1,0 +1,22 @@
+# Compiled binaries
+/htb-replicator
+/htb-replicator-*
+/replicator
+/replicator-linux-amd64
+/replicator-linux-arm64
+
+# Config with secrets (keep example, ignore actual)
+config.yaml
+!config.example.yaml
+
+# SQLite metadata database
+*.db
+*.db-wal
+*.db-shm
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

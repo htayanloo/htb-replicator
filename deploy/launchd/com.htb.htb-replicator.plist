@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Unique reverse-domain identifier -->
+  <key>Label</key>
+  <string>com.htb.htb-replicator</string>
+
+  <!-- Full path to binary + arguments -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/replicator</string>
+    <string>start</string>
+    <string>--config</string>
+    <string>/etc/htb-replicator/config.yaml</string>
+  </array>
+
+  <!-- Start immediately when loaded and after every reboot -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart automatically on crash (but not on clean exit) -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!-- Throttle rapid-restart loop to 10 seconds -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Log files -->
+  <key>StandardOutPath</key>
+  <string>/var/log/htb-replicator/stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/var/log/htb-replicator/stderr.log</string>
+
+  <!-- Working directory -->
+  <key>WorkingDirectory</key>
+  <string>/var/lib/htb-replicator</string>
+
+  <!-- Environment variables -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/var/lib/htb-replicator</string>
+  </dict>
+</dict>
+</plist>
