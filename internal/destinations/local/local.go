@@ -102,6 +102,11 @@ func (d *localDest) Write(ctx context.Context, obj destinations.Object, r io.Rea
 // Exists checks whether the object key is already present on disk and returns
 // its MD5 ETag (computed by reading the file).
 func (d *localDest) Exists(ctx context.Context, key string) (string, bool, error) {
+	// Directory markers (keys ending with "/") are never stored as files.
+	if strings.HasSuffix(key, "/") {
+		return "", false, nil
+	}
+
 	destPath := filepath.Join(d.root, filepath.FromSlash(key))
 	f, err := os.Open(destPath)
 	if os.IsNotExist(err) {
@@ -111,6 +116,15 @@ func (d *localDest) Exists(ctx context.Context, key string) (string, bool, error
 		return "", false, fmt.Errorf("open %q for existence check: %w", key, err)
 	}
 	defer f.Close()
+
+	// Guard against a directory existing where a file is expected.
+	fi, err := f.Stat()
+	if err != nil {
+		return "", false, fmt.Errorf("stat %q: %w", key, err)
+	}
+	if fi.IsDir() {
+		return "", false, nil
+	}
 
 	hasher := md5.New()
 	if _, err := copyWithContext(ctx, hasher, f); err != nil {

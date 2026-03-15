@@ -3,6 +3,7 @@ package s3
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -34,10 +35,16 @@ func (c *s3Client) ListAll(ctx context.Context) ([]source.SourceObject, error) {
 		}
 
 		for _, obj := range page.Contents {
-			so := source.SourceObject{}
-			if obj.Key != nil {
-				so.Key = *obj.Key
+			if obj.Key == nil {
+				continue
 			}
+			// Skip S3 directory markers — zero-byte objects whose key ends
+			// with "/" that the S3 console creates to represent "folders".
+			// They have no file content and must not be written to destinations.
+			if strings.HasSuffix(*obj.Key, "/") {
+				continue
+			}
+			so := source.SourceObject{Key: *obj.Key}
 			if obj.ETag != nil {
 				so.ETag = *obj.ETag
 			}
