@@ -5,11 +5,13 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/htb/htb-replicator/config"
 	"github.com/htb/htb-replicator/internal/destinations"
@@ -48,14 +50,15 @@ func (d *localDest) Type() string { return "local" }
 func (d *localDest) Write(ctx context.Context, obj destinations.Object, r io.Reader) (destinations.WriteResult, error) {
 	destPath := filepath.Join(d.root, filepath.FromSlash(obj.Key))
 
-	// Ensure parent directories exist.
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	// Ensure parent directories exist, removing any stale marker-files that
+	// block directory creation (left over from pre-fix writes of "folder" keys).
+	if err := ensureDir(filepath.Dir(destPath)); err != nil {
 		return destinations.WriteResult{}, fmt.Errorf("mkdir parent for %q: %w", obj.Key, err)
 	}
 
 	// Create the .tmp directory next to the destination.
 	tmpDir := filepath.Join(filepath.Dir(destPath), ".tmp")
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+	if err := ensureDir(tmpDir); err != nil {
 		return destinations.WriteResult{}, fmt.Errorf("mkdir tmp for %q: %w", obj.Key, err)
 	}
 
@@ -109,7 +112,9 @@ func (d *localDest) Exists(ctx context.Context, key string) (string, bool, error
 
 	destPath := filepath.Join(d.root, filepath.FromSlash(key))
 	f, err := os.Open(destPath)
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) || isNotDirErr(err) {
+		// isNotDirErr: a path component is a stale marker-file, not a directory.
+		// Treat as not-present; Write() will repair the path via ensureDir.
 		return "", false, nil
 	}
 	if err != nil {
@@ -187,6 +192,55 @@ func (d *localDest) Ping(_ context.Context) error {
 
 // Close is a no-op for the local destination.
 func (d *localDest) Close() error { return nil }
+
+// isNotDirErr reports whether err is an ENOTDIR error, which occurs when a
+// regular file sits at a path component that the OS expects to be a directory.
+func isNotDirErr(err error) bool {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return errors.Is(pe.Err, syscall.ENOTDIR)
+	}
+	return false
+}
+
+// ensureDir is a drop-in replacement for os.MkdirAll that also handles the
+// case where a regular file (a stale S3 directory-marker write) is blocking
+// creation of a path component. The blocking file is removed and MkdirAll is
+// retried once.
+func ensureDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err == nil {
+		return nil
+	}
+	// Walk each component and remove the first regular file we find where a
+	// directory is required.
+	parts := strings.Split(filepath.ToSlash(dir), "/")
+	cur := ""
+	for _, part := range parts {
+		if part == "" {
+			cur = "/"
+			continue
+		}
+		if cur == "" || cur == "/" {
+			cur += part
+		} else {
+			cur = cur + "/" + part
+		}
+		fi, statErr := os.Lstat(cur)
+		if os.IsNotExist(statErr) {
+			break
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if !fi.IsDir() {
+			if rmErr := os.Remove(cur); rmErr != nil {
+				return fmt.Errorf("remove stale marker file %q: %w", cur, rmErr)
+			}
+			break
+		}
+	}
+	return os.MkdirAll(dir, 0o755)
+}
 
 // randomHex returns a hex-encoded random string of n bytes.
 func randomHex(n int) string {
