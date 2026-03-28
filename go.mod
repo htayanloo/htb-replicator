@@ -15,7 +15,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/wneessen/go-mail v0.4.2
+	github.com/wneessen/go-mail v0.7.1
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.49.0
 	modernc.org/sqlite v1.33.1
